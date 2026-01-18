@@ -663,6 +663,167 @@ app.delete('/api/users/:userId', async (req, res) => {
 });
 
 // ============================================
+// WORLD CHAT FEATURE
+// ============================================
+
+// Chat Message Schema
+const chatMessageSchema = new mongoose.Schema({
+  messageId: {
+    type: String,
+    required: true,
+    unique: true,
+    index: true
+  },
+  userId: {
+    type: String,
+    required: true,
+    index: true
+  },
+  username: {
+    type: String,
+    required: true,
+    trim: true,
+    maxlength: 30
+  },
+  country: {
+    type: String,
+    default: '🌍'
+  },
+  message: {
+    type: String,
+    required: true,
+    maxlength: 500
+  },
+  // Optional: Shared design info
+  designName: {
+    type: String,
+    maxlength: 100
+  },
+  designNotes: {
+    type: String,
+    maxlength: 2000
+  },
+  designScore: {
+    type: Number,
+    min: 0,
+    max: 100
+  },
+  timestamp: {
+    type: Date,
+    default: Date.now,
+    index: true
+  }
+});
+
+// Index for fetching recent messages
+chatMessageSchema.index({ timestamp: -1 });
+
+const ChatMessage = mongoose.model('ChatMessage', chatMessageSchema);
+
+/**
+ * Get recent chat messages (last 20)
+ * GET /api/chat/messages
+ */
+app.get('/api/chat/messages', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    
+    const messages = await ChatMessage.find()
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .lean();
+    
+    // Reverse to show oldest first (chronological order)
+    messages.reverse();
+    
+    res.json({
+      success: true,
+      messages: messages.map(msg => ({
+        messageId: msg.messageId,
+        userId: msg.userId,
+        username: msg.username,
+        country: msg.country,
+        message: msg.message,
+        designName: msg.designName,
+        designNotes: msg.designNotes,
+        designScore: msg.designScore,
+        timestamp: msg.timestamp.getTime()
+      })),
+      count: messages.length
+    });
+  } catch (error) {
+    console.error('Get chat messages error:', error);
+    res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+});
+
+/**
+ * Send a chat message
+ * POST /api/chat/send
+ * 
+ * Body: { userId, username, country, message, designName?, designNotes?, designScore? }
+ */
+app.post('/api/chat/send', async (req, res) => {
+  try {
+    let { userId, username, country, message, designName, designNotes, designScore } = req.body;
+
+    if (!userId || !message) {
+      return res.status(400).json({ error: 'userId and message are required' });
+    }
+
+    // SECURITY: Sanitize inputs
+    username = sanitizeString(username, MAX_USERNAME_LENGTH) || 'Anonymous';
+    message = sanitizeString(message, 500);
+    country = sanitizeString(country, 10) || '🌍';
+    designName = designName ? sanitizeString(designName, 100) : null;
+    designNotes = designNotes ? sanitizeString(designNotes, 2000) : null;
+    designScore = designScore ? validateScore(designScore) : null;
+
+    if (message.length < 1) {
+      return res.status(400).json({ error: 'Message cannot be empty' });
+    }
+
+    // Generate unique message ID
+    const messageId = uuidv4();
+
+    // Create the chat message
+    const chatMessage = new ChatMessage({
+      messageId,
+      userId,
+      username,
+      country,
+      message,
+      designName,
+      designNotes,
+      designScore,
+      timestamp: new Date()
+    });
+
+    await chatMessage.save();
+
+    // Clean up old messages (keep only last 100)
+    const messageCount = await ChatMessage.countDocuments();
+    if (messageCount > 100) {
+      const oldMessages = await ChatMessage.find()
+        .sort({ timestamp: 1 })
+        .limit(messageCount - 100);
+      
+      const oldMessageIds = oldMessages.map(m => m._id);
+      await ChatMessage.deleteMany({ _id: { $in: oldMessageIds } });
+    }
+
+    res.status(201).json({
+      success: true,
+      messageId,
+      message: 'Message sent successfully'
+    });
+  } catch (error) {
+    console.error('Send chat message error:', error);
+    res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
+// ============================================
 // START SERVER
 // ============================================
 
