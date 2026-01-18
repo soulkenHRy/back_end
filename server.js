@@ -752,6 +752,7 @@ app.get('/api/chat/messages', async (req, res) => {
         designName: msg.designName,
         designNotes: msg.designNotes,
         designScore: msg.designScore,
+        designCanvas: msg.designCanvas,
         timestamp: msg.timestamp.getTime()
       })),
       count: messages.length
